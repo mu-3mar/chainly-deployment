@@ -7,17 +7,23 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Minimal runtime libs for OpenCV and PyAV/aiortc wheels
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
     libgl1 \
     libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
   && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /app/requirements.txt
-RUN pip install --upgrade pip && pip install -r /app/requirements.txt
+
+RUN pip install --upgrade pip \
+ && pip install -r /app/requirements.txt \
+ && pip install opencv-python-headless
 
 COPY . /app
 
-EXPOSE 8000
+EXPOSE 5000
 
 CMD ["python", "main.py"]
