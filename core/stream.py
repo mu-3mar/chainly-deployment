@@ -20,6 +20,8 @@ for camera device I/O (which can stall during YUYV decode or USB bus contention)
 """
 
 import logging
+import os
+import subprocess
 import threading
 import time
 from collections import deque
@@ -52,51 +54,65 @@ class CamStream:
         Initialize camera and configure hardware parameters.
 
         Args:
-            source: Camera device index or file path.
-            width:  Deprecated. Kept for backwards compatibility; capture always
-                    uses the camera’s native resolution.
-            height: Deprecated. Kept for backwards compatibility; capture always
-                    uses the camera’s native resolution.
+            source: Camera device index or RTSP/HTTP URL.
+            width:  Frame width expected from the source (used for FFmpeg pipe sizing).
+            height: Frame height expected from the source (used for FFmpeg pipe sizing).
         """
-        # NOTE (Resolution Policy):
-        #   We deliberately DO NOT set CAP_PROP_FRAME_WIDTH / HEIGHT here.
-        #   The stream is opened at its native resolution and all downstream
-        #   processing (detection + rendering + WebRTC) operates on the
-        #   full‑resolution frames. Any inference-time resizing must be done
-        #   on a copy inside the pipeline, never by downscaling the capture.
-        #
-        # Deployment note:
-        #   In production `camera_source` is a public RTSP/HTTP URL. For URLs we
-        #   must not force Linux V4L2/MJPG settings (they apply to local devices only).
         src_str = str(source) if source is not None else ""
         is_url = isinstance(source, str) and "://" in src_str
+
+        self._is_url = is_url
+        self._width = int(width)
+        self._height = int(height)
+        self._pipe: Optional[subprocess.Popen] = None
+        self.cap = None  # used by local device path only
+
         if is_url:
-            self.cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            # ── FFmpeg subprocess pipe for RTSP/HTTP URLs ──────────────────────
+            # OpenCV's built-in RTSP decoder can produce green/black frames inside
+            # Docker due to missing codec libraries. Piping through ffmpeg avoids
+            # this entirely and gives us explicit TCP-transport control.
+            ffmpeg_cmd = [
+                "ffmpeg",
+                "-loglevel", "error",          # suppress verbose output
+                "-rtsp_transport", "tcp",       # no UDP — prevents green frames
+                "-i", source,
+                "-f", "rawvideo",
+                "-pix_fmt", "bgr24",            # OpenCV-native pixel order
+                "-vf", f"scale={self._width}:{self._height}",
+                "-",                            # write to stdout
+            ]
+            self._pipe = subprocess.Popen(
+                ffmpeg_cmd,
+                stdout=subprocess.PIPE,
+                stderr=open(os.devnull, "wb"),
+                bufsize=10 ** 8,
+            )
+            logger.debug(
+                "FFmpegStream opened: url=%s, res=%dx%d",
+                source, self._width, self._height,
+            )
         else:
-            # ── Local device path/index legacy path (kept for backwards compatibility) ──
+            # ── Local device path/index (V4L2, legacy) ────────────────────────
             self.cap = cv2.VideoCapture(source, cv2.CAP_V4L2)
             self.cap.set(
                 cv2.CAP_PROP_FOURCC,
                 cv2.VideoWriter_fourcc(*"MJPG"),
             )
 
-        if not self.cap.isOpened():
-            logger.error("Failed to open video source: %s", source)
-            raise RuntimeError(f"Could not open video source: {source}")
+            if not self.cap.isOpened():
+                logger.error("Failed to open video source: %s", source)
+                raise RuntimeError(f"Could not open video source: {source}")
 
-        # Read back actual properties (camera may not honour all requests exactly)
-        actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
-        fourcc_int = int(self.cap.get(cv2.CAP_PROP_FOURCC))
-        fourcc_str = "".join([chr((fourcc_int >> (8 * i)) & 0xFF) for i in range(4)])
-
-        backend = "default" if is_url else "V4L2"
-        logger.debug(
-            "CamStream opened: backend=%s, fourcc=%s, res=%dx%d, estimated_fps=%.1f",
-            backend, fourcc_str, actual_w, actual_h, actual_fps,
-        )
+            actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
+            fourcc_int = int(self.cap.get(cv2.CAP_PROP_FOURCC))
+            fourcc_str = "".join([chr((fourcc_int >> (8 * i)) & 0xFF) for i in range(4)])
+            logger.debug(
+                "CamStream opened: backend=V4L2, fourcc=%s, res=%dx%d, estimated_fps=%.1f",
+                fourcc_str, actual_w, actual_h, actual_fps,
+            )
 
         # ── Task 1+2: Single-slot frame queue — newest frame only ──
         # deque(maxlen=1) provides atomic single-element replacement;
@@ -108,7 +124,7 @@ class CamStream:
         self._thread: Optional[threading.Thread] = None
 
         # Metrics: camera-side FPS estimate (updated by capture thread)
-        self._camera_fps: float = actual_fps if actual_fps > 0 else 0.0
+        self._camera_fps: float = 0.0
         self._capture_frame_count: int = 0
         self._capture_last_time: float = time.time()
 
@@ -161,10 +177,14 @@ class CamStream:
         return self._last_enqueue_time
 
     def release(self) -> None:
-        """Stop the capture thread and release the VideoCapture resource."""
+        """Stop the capture thread and release the VideoCapture / FFmpeg pipe."""
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
+        if self._pipe is not None:
+            self._pipe.terminate()
+            self._pipe.wait(timeout=3.0)
+            self._pipe = None
         if self.cap is not None:
             self.cap.release()
         logger.debug("CamStream released")
@@ -176,6 +196,8 @@ class CamStream:
         Legacy blocking read. Retained for backward compatibility only.
         New code should use start() + get_latest_frame() instead.
         """
+        if self._is_url:
+            return self.get_latest_frame()
         return self.cap.read()
 
     # ── Private ──────────────────────────────────────────────────────────────
@@ -194,15 +216,36 @@ class CamStream:
         fps_last_time = time.time()
         _read_fail_logged = False
 
+        frame_bytes = self._width * self._height * 3  # bgr24
+
         while not self._stop_event.is_set():
-            ret, frame = self.cap.read()
-            if not ret:
-                if not _read_fail_logged:
-                    logger.warning("Camera read failed (ret=False)")
-                    _read_fail_logged = True
-                time.sleep(0.05)
-                continue
-            _read_fail_logged = False
+            if self._is_url:
+                # ── FFmpeg pipe read ───────────────────────────────────────
+                raw = self._pipe.stdout.read(frame_bytes)
+                if len(raw) < frame_bytes:
+                    if not _read_fail_logged:
+                        logger.warning(
+                            "FFmpeg pipe read returned %d bytes (expected %d); "
+                            "stream may have dropped",
+                            len(raw), frame_bytes,
+                        )
+                        _read_fail_logged = True
+                    time.sleep(0.05)
+                    continue
+                frame = np.frombuffer(raw, np.uint8).reshape(
+                    (self._height, self._width, 3)
+                )
+                _read_fail_logged = False
+            else:
+                # ── Local device (V4L2) read ───────────────────────────────
+                ret, frame = self.cap.read()
+                if not ret:
+                    if not _read_fail_logged:
+                        logger.warning("Camera read failed (ret=False)")
+                        _read_fail_logged = True
+                    time.sleep(0.05)
+                    continue
+                _read_fail_logged = False
 
             # Enqueue — automatically evicts old frame if consumer is slow
             self._frame_queue.append(frame)

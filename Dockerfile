@@ -20,7 +20,6 @@ COPY requirements.txt /app/requirements.txt
 
 RUN pip install --upgrade pip \
  && pip install -r /app/requirements.txt \
- && pip install opencv-python-headless
 
 COPY . /app
 
