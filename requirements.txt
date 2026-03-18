@@ -6,7 +6,7 @@ pydantic==2.12.5
 PyYAML==6.0.3
 
 numpy==2.2.6
-opencv-python-headless==4.13.0.90
+opencv-python==4.13.0.90
 
 # CPU-only PyTorch
 torch==2.9.1
