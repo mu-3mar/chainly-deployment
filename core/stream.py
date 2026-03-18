@@ -71,7 +71,8 @@ class CamStream:
         src_str = str(source) if source is not None else ""
         is_url = isinstance(source, str) and "://" in src_str
         if is_url:
-            self.cap = cv2.VideoCapture(source)
+            self.cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         else:
             # ── Local device path/index legacy path (kept for backwards compatibility) ──
             self.cap = cv2.VideoCapture(source, cv2.CAP_V4L2)
