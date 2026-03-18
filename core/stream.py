@@ -20,8 +20,6 @@ for camera device I/O (which can stall during YUYV decode or USB bus contention)
 """
 
 import logging
-import os
-import subprocess
 import threading
 import time
 from collections import deque
@@ -29,6 +27,8 @@ from typing import Optional, Tuple
 
 import cv2
 import numpy as np
+
+from core.ffmpeg_stream import FFmpegStream
 
 logger = logging.getLogger(__name__)
 
@@ -64,34 +64,11 @@ class CamStream:
         self._is_url = is_url
         self._width = int(width)
         self._height = int(height)
-        self._pipe: Optional[subprocess.Popen] = None
+        self.ff_stream = None
         self.cap = None  # used by local device path only
 
         if is_url:
-            # ── FFmpeg subprocess pipe for RTSP/HTTP URLs ──────────────────────
-            # OpenCV's built-in RTSP decoder can produce green/black frames inside
-            # Docker due to missing codec libraries. Piping through ffmpeg avoids
-            # this entirely and gives us explicit TCP-transport control.
-            ffmpeg_cmd = [
-                "ffmpeg",
-                "-loglevel", "error",          # suppress verbose output
-                "-rtsp_transport", "tcp",       # no UDP — prevents green frames
-                "-i", source,
-                "-f", "rawvideo",
-                "-pix_fmt", "bgr24",            # OpenCV-native pixel order
-                "-vf", f"scale={self._width}:{self._height}",
-                "-",                            # write to stdout
-            ]
-            self._pipe = subprocess.Popen(
-                ffmpeg_cmd,
-                stdout=subprocess.PIPE,
-                stderr=open(os.devnull, "wb"),
-                bufsize=10 ** 8,
-            )
-            logger.debug(
-                "FFmpegStream opened: url=%s, res=%dx%d",
-                source, self._width, self._height,
-            )
+            self.ff_stream = FFmpegStream(source, self._width, self._height)
         else:
             # ── Local device path/index (V4L2, legacy) ────────────────────────
             self.cap = cv2.VideoCapture(source, cv2.CAP_V4L2)
@@ -181,10 +158,9 @@ class CamStream:
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
-        if self._pipe is not None:
-            self._pipe.terminate()
-            self._pipe.wait(timeout=3.0)
-            self._pipe = None
+        if self.ff_stream is not None:
+            self.ff_stream.release()
+            self.ff_stream = None
         if self.cap is not None:
             self.cap.release()
         logger.debug("CamStream released")
@@ -216,25 +192,15 @@ class CamStream:
         fps_last_time = time.time()
         _read_fail_logged = False
 
-        frame_bytes = self._width * self._height * 3  # bgr24
-
         while not self._stop_event.is_set():
             if self._is_url:
-                # ── FFmpeg pipe read ───────────────────────────────────────
-                raw = self._pipe.stdout.read(frame_bytes)
-                if len(raw) < frame_bytes:
+                frame = self.ff_stream.read()
+                if frame is None:
                     if not _read_fail_logged:
-                        logger.warning(
-                            "FFmpeg pipe read returned %d bytes (expected %d); "
-                            "stream may have dropped",
-                            len(raw), frame_bytes,
-                        )
+                        logger.warning("FFmpegStream read failed or stream dropped")
                         _read_fail_logged = True
                     time.sleep(0.05)
                     continue
-                frame = np.frombuffer(raw, np.uint8).reshape(
-                    (self._height, self._width, 3)
-                )
                 _read_fail_logged = False
             else:
                 # ── Local device (V4L2) read ───────────────────────────────
