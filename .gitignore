@@ -22,3 +22,9 @@ config/webrtc.yaml
 # Node (if any)
 node_modules/
 
+# Models
+*.engine
+*.pt
+*.onnx
+*.tflite
+*.tflite
