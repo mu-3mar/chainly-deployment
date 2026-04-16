@@ -1,9 +1,0 @@
-__pycache__/
-*.pyc
-
-.git/
-.env
-node_modules/
-
-# Keep models/ included (required at runtime). Do not ignore it.
-
