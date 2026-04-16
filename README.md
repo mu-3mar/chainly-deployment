@@ -1,163 +1,63 @@
-### Chainly AI Detection Service
+# Chainly AI
 
-Production-ready **FastAPI** service for **real-time quality-control detection** using **Ultralytics YOLO** (PyTorch, CPU), **OpenCV** frame processing, **multi-session** threaded inference, optional **WebRTC** video streaming (via `aiortc`), and **Firebase Realtime Database** event logging.
+Production-oriented **CPU-only** computer vision service: **FastAPI** exposes a multi-session API, **Ultralytics YOLO** runs box and defect detection, and **WebRTC** streams annotated video. Configuration and secrets stay outside the image and are mounted or copied at runtime.
 
----
+## Features
 
-### Project Overview
+- **FastAPI** with OpenAPI docs at `/docs`
+- **Ultralytics YOLO** inference on **PyTorch CPU** (no ONNX export path in this service)
+- **Threaded camera pipeline**, per-session workers, and **WebRTC** video tracks
+- **Firebase** integration for reporting (credentials via config)
+- **Docker** image tuned for **layer caching**: dependency install is separate from application code
 
-This repository runs a server (`python main.py`) that starts a FastAPI app (Uvicorn) on **port 8000**. Clients can open/close detection sessions (reports), stream annotated video via WebRTC (if configured), and read health/config endpoints.
+## Project structure
 
----
+| Path | Role |
+|------|------|
+| `main.py` | Process entry: reads `config/api.yaml`, starts Uvicorn |
+| `api/` | FastAPI app, routes, WebRTC offer/answer |
+| `core/` | Model loader, sessions, stream, pipeline, device helpers |
+| `detectors/` | YOLO wrapper (confidence, IoU, device) |
+| `models/` | Weight files (`.pt` / checkpoints) — not committed |
+| `config/` | YAML + secrets — not committed; use `*.example.*` templates |
+| `utils/` | Geometry, visualization helpers |
 
-### Features
+## Setup
 
-- **AI detection (YOLO)**: loads two YOLO models (box + defect) and runs inference in real time (CPU by default).
-- **Real-time processing**: threaded camera capture + continuous pipeline loop per active session.
-- **API endpoints**: session lifecycle, health, config.
-- **WebRTC streaming (optional)**: provides ICE config and WebRTC offer/answer endpoint when `config/webrtc.yaml` is present.
+### Docker
 
----
-
-### Project Structure
-
-- **`main.py`**: entry point; launches Uvicorn on port **8000**.
-- **`api/`**: FastAPI app and routes (sessions, health, WebRTC).
-- **`config/`**: YAML/JSON configuration (safe defaults + templates; secrets are excluded).
-- **`core/`**: pipeline/session management, model loader, Firebase client, streaming tracks.
-- **`detectors/`**: YOLO detector wrapper.
-- **`models/`**: model artifacts (assumed present locally).
-
----
-
-### Setup Instructions
-
-#### Option 1: Run with Docker (recommended)
-
-Build:
+Build and run (mount your local `config` so the container sees YAML and Firebase credentials):
 
 ```bash
 docker build -t chainly-ai .
-```
-
-Run (mount config at runtime):
-
-```bash
 docker run -p 8000:8000 -v $(pwd)/config:/app/config chainly-ai
 ```
 
-#### Option 2: Run locally
+The API process is started with `python main.py` (same as local runs).
 
-Install:
+### Configuration
 
-```bash
-pip install -r requirements.txt
-```
+**Config files are not shipped in the repository for security and environment differences.** You must add them manually under `config/`, using the checked-in examples as templates (e.g. `webrtc.example.yaml` → `webrtc.yaml`, Firebase JSON paths as documented in those files).
 
-Run:
+Minimum expectations:
 
-```bash
-python main.py
-```
+- `config/api.yaml` — host, port, logging (optional)
+- `config/webrtc.yaml` — STUN/TURN for WebRTC
+- `config/box_detector.yaml`, `config/defect_detector.yaml`, `config/stream.yaml` — models and thresholds
+- `config/firebase.yaml` (and service account JSON as referenced) — if you use Firebase
 
----
+Place YOLO weight files under `models/` (or use absolute `model_path` values in YAML).
 
-### Configuration Setup (VERY IMPORTANT)
+### Access
 
-This project **DOES NOT include secrets**. You must provide the following files **manually** before running:
+- **Interactive API docs:** [http://localhost:8000/docs](http://localhost:8000/docs)
 
-1. **`config/firebase.yaml`**
-2. **`config/webrtc.yaml`**
-3. **A Firebase service account JSON** (placed inside `config/`, filename referenced by `config/firebase.yaml`)
+## Performance notes
 
-Use the committed templates as starting points:
+- **CPU-only**: PyTorch is installed from the official CPU wheel index inside the image; inference uses `device="cpu"`.
+- **Image size**: Slim base + CPU wheels targets roughly **~2 GB** depending on Ultralytics and transitive deps.
+- **Rebuild speed**: Changing only application code should **not** invalidate the dependency layers in the Dockerfile.
 
-- **`config/firebase.example.yaml`** → copy to **`config/firebase.yaml`**
-- **`config/webrtc.example.yaml`** → copy to **`config/webrtc.yaml`**
+## License
 
-Example workflow:
-
-```bash
-cp config/firebase.example.yaml config/firebase.yaml
-cp config/webrtc.example.yaml config/webrtc.yaml
-```
-
-Then edit the new files and place your Firebase service account JSON inside `config/`.
-
----
-
-### How to run after adding configs
-
-1. **Place config files inside `config/`**
-   - `config/firebase.yaml`
-   - `config/webrtc.yaml`
-   - `config/<your-firebase-service-account>.json`
-2. **Build the Docker image**
-
-```bash
-docker build -t chainly-ai .
-```
-
-3. **Run the container (configs are used at runtime)**
-
-```bash
-docker run -p 8000:8000 -v $(pwd)/config:/app/config chainly-ai
-```
-
----
-
-### Access the app
-
-- **API base**: `http://localhost:8000`
-- **Swagger UI**: `http://localhost:8000/docs`
-
----
-
-### 🔐 Security Notes
-
-The following files are **NOT included** in the repository because they contain secrets:
-
-- **Firebase service account JSON** (contains a private key)
-- **`config/firebase.yaml`** (points to credentials and environment-specific database URL)
-- **`config/webrtc.yaml`** (contains TURN secret used to generate temporary credentials)
-
-Do **not** push these to GitHub.
-
----
-
-### 📦 What to share privately
-
-These files must be shared **out-of-band** (private transfer) and placed in the **`config/`** folder:
-
-- Firebase service account JSON
-- `config/firebase.yaml`
-- `config/webrtc.yaml`
-
----
-
-### Execution Flow (runtime config, not build-time)
-
-1. Clone the repo
-2. Add the private config files into `config/` (from a private source)
-3. Build:
-
-```bash
-docker build -t chainly-ai .
-```
-
-4. Run (mount config directory at runtime):
-
-```bash
-docker run -p 8000:8000 -v $(pwd)/config:/app/config chainly-ai
-```
-
-**Important**: the configuration files are read **at runtime** from `/app/config` (the mounted volume). They are **not** required during the Docker build.
-
----
-
-### Final Summary
-
-- **What goes to GitHub**: application code + safe defaults + example config templates (`config/*.example.*`)
-- **What is shared privately**: Firebase service account JSON, `config/firebase.yaml`, `config/webrtc.yaml`
-- **When configs are used**: **runtime**, via the mounted `config/` directory
-
+See your repository’s license file if applicable.

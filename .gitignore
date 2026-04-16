@@ -1,30 +1,20 @@
-# Python
 __pycache__/
+**/__pycache__/
 *.pyc
-
-# Environment
+*.py[cod]
 .env
-
-# Git (not typically needed, but included per requirement)
 .git/
 
-# Secrets (VERY IMPORTANT)
-config/*.json
-config/firebase.yaml
-config/webrtc.yaml
-
-# Keep example config templates tracked
-!config/*.example.json
-!config/firebase_config.json.example
-!config/firebase-service-account.example.json
+# Secrets and local runtime config (example templates stay tracked — see negated rules below)
+config/*
+!config/README.md
 !config/*.example.yaml
+!config/*.example.json
+!config/*example*.yaml
+!config/*example*.json
 
-# Node (if any)
+# Trained weights and checkpoints (large / environment-specific)
+models/
+config/
+
 node_modules/
-
-# Models
-*.engine
-*.pt
-*.onnx
-*.tflite
-*.tflite

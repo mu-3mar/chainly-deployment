@@ -1,17 +1,15 @@
-fastapi==0.128.2
-uvicorn==0.40.0
-pydantic==2.12.5
-PyYAML==6.0.3
+# Runtime dependencies (CPU PyTorch is installed separately in Dockerfile).
+# Pin only where needed for binary compatibility.
 
-numpy==2.2.6
-opencv-python-headless==4.13.0.90
+fastapi
+uvicorn
+pydantic
+PyYAML
 
-# YOLO (PyTorch is installed separately in the Dockerfile as CPU-only wheels)
-ultralytics==8.4.7
+numpy==1.26.4
+opencv-python-headless==4.8.1.78
+ultralytics
 
-# WebRTC
-aiortc==1.14.0
-av==16.1.0
-
-# Firebase
-firebase_admin==7.2.0
+aiortc
+av
+firebase_admin

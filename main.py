@@ -9,10 +9,8 @@ import uvicorn
 
 
 def _apply_library_logging(api_cfg: dict) -> None:
-    """Set third-party library log levels from config (applied via env for ONNX/YOLO/OpenCV)."""
+    """Set third-party library log levels from config (YOLO/OpenCV env vars)."""
     lib = api_cfg.get("library_logging") or {}
-    if lib.get("ort") is not None:
-        os.environ["ORT_LOGGING_LEVEL"] = str(lib["ort"])
     if lib.get("yolo_verbose") is not None:
         os.environ["YOLO_VERBOSE"] = str(lib["yolo_verbose"]).lower()
     if lib.get("opencv") is not None:
@@ -47,11 +45,6 @@ def main():
     api_cfg.setdefault("log_level", "warning")
 
     _apply_library_logging(api_cfg)
-    try:
-        import onnxruntime as ort
-        ort.set_default_logger_severity(int(api_cfg.get("library_logging", {}).get("ort", 3)))
-    except ImportError:
-        pass
 
     _suppress_noisy_loggers()
 

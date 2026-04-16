@@ -23,12 +23,91 @@ import logging
 import threading
 import time
 from collections import deque
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import cv2
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+_OPEN_RETRIES = 3
+_POST_OPEN_SETTLE_S = 0.2
+_POST_FOURCC_SETTLE_S = 0.05
+_RETRY_BACKOFF_S = 0.25
+
+
+def _normalize_camera_source(source: Union[int, str]) -> Union[int, str]:
+    """Resolve API/JSON values for V4L2: digit-only strings become int; paths stay str."""
+    if isinstance(source, int):
+        return source
+    if isinstance(source, str):
+        s = source.strip()
+        if s.isdigit():
+            return int(s)
+        return s
+    raise TypeError(f"Camera source must be int or str, got {type(source).__name__}")
+
+
+def _open_v4l2_capture(source: Union[int, str]) -> cv2.VideoCapture:
+    """
+    Open a Linux V4L2 device with short settle time, MJPG when possible, and retries.
+    """
+    resolved = _normalize_camera_source(source)
+    logger.info(
+        "Camera init: requested=%r resolved=%r backend=CAP_V4L2",
+        source,
+        resolved,
+    )
+
+    for attempt in range(_OPEN_RETRIES):
+        if attempt > 0:
+            time.sleep(_RETRY_BACKOFF_S * attempt)
+
+        cap = cv2.VideoCapture(resolved, cv2.CAP_V4L2)
+        time.sleep(_POST_OPEN_SETTLE_S)
+        opened = cap.isOpened()
+        logger.info(
+            "Camera open attempt %d/%d: source=%r isOpened=%s",
+            attempt + 1,
+            _OPEN_RETRIES,
+            resolved,
+            opened,
+        )
+        if not opened:
+            cap.release()
+            continue
+
+        cap.set(
+            cv2.CAP_PROP_FOURCC,
+            cv2.VideoWriter_fourcc(*"MJPG"),
+        )
+        time.sleep(_POST_FOURCC_SETTLE_S)
+        if cap.isOpened():
+            return cap
+
+        logger.warning(
+            "Camera not usable after MJPG; reopening without MJPG (source=%r)",
+            resolved,
+        )
+        cap.release()
+        cap = cv2.VideoCapture(resolved, cv2.CAP_V4L2)
+        time.sleep(_POST_OPEN_SETTLE_S)
+        opened = cap.isOpened()
+        logger.info(
+            "Camera (no MJPG): source=%r isOpened=%s",
+            resolved,
+            opened,
+        )
+        if opened:
+            return cap
+        cap.release()
+
+    raise RuntimeError(
+        f"Failed to open camera after {_OPEN_RETRIES} attempts: "
+        f"requested={source!r} resolved={resolved!r}. "
+        "Verify Docker has --device=/dev/videoN, the process can access the device "
+        "(e.g. video group), and try an explicit path such as /dev/video1."
+    )
 
 
 class CamStream:
@@ -37,7 +116,7 @@ class CamStream:
 
     Task 4 — Camera Performance Enforcement:
       - Forces V4L2 backend (Linux; avoids generic fallback).
-      - Forces MJPG fourcc (avoids YUYV which caps many webcams at ~10 FPS).
+      - Prefers MJPG fourcc when the device accepts it (falls back if not).
       - Applies configured resolution.
       - Logs actual backend, format, resolution, and estimated FPS after open.
 
@@ -52,28 +131,20 @@ class CamStream:
         Initialize camera and configure hardware parameters.
 
         Args:
-            source: Camera device index or file path.
+            source: V4L2 device index (int), device path (e.g. "/dev/video1"), or digit-only str.
             width:  Deprecated. Kept for backwards compatibility; capture always
                     uses the camera’s native resolution.
             height: Deprecated. Kept for backwards compatibility; capture always
                     uses the camera’s native resolution.
         """
-        # ── Task 4: Force V4L2 backend + MJPG for maximum Linux camera FPS ──
+        # ── Task 4: V4L2 backend + MJPG when supported (fallback without MJPG) ──
         # NOTE (Resolution Policy):
         #   We deliberately DO NOT set CAP_PROP_FRAME_WIDTH / HEIGHT here.
         #   The camera is opened at its native resolution and all downstream
         #   processing (detection + rendering + WebRTC) operates on the
         #   full‑resolution frames. Any inference-time resizing must be done
         #   on a copy inside the pipeline, never by downscaling the capture.
-        self.cap = cv2.VideoCapture(source, cv2.CAP_V4L2)
-        self.cap.set(
-            cv2.CAP_PROP_FOURCC,
-            cv2.VideoWriter_fourcc(*"MJPG"),
-        )
-
-        if not self.cap.isOpened():
-            logger.error("Failed to open video source: %s", source)
-            raise RuntimeError(f"Could not open video source: {source}")
+        self.cap = _open_v4l2_capture(source)
 
         # Read back actual properties (camera may not honour all requests exactly)
         actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
