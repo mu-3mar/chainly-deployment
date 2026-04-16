@@ -1,34 +1,9 @@
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-.Python
-
-.venv/
-venv/
-env/
-.env
 
 .git/
-.github/
+.env
+node_modules/
 
-# Local/unused folders left from cleanup
-requirements/
-scripts/
-
-# Secrets (must be mounted/provided at runtime)
-config/webrtc.yaml
-config/firebase-service-account.json
-config/firebase_config.json
-config/*adminsdk*.json
-
-# models 
-models/
-*.onnx
-*.engine
-*.pt
-
-# OS/editor noise
-.DS_Store
-*.log
+# Keep models/ included (required at runtime). Do not ignore it.
 

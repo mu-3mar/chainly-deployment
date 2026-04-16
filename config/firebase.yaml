@@ -5,5 +5,5 @@
 # service account JSON; it is gitignored. Use the europe-west1 URL provided
 # by Firebase as database_url.
 
-service_account_path: "config/firebase-service-account.json"
+service_account_path: "chainly-f4afa-firebase-adminsdk-fbsvc-42caaffab8.json"
 database_url: "https://chainly-f4afa-default-rtdb.europe-west1.firebasedatabase.app"

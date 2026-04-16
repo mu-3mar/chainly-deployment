@@ -63,18 +63,22 @@ def get_initialized() -> bool:
     return _initialized
 
 
-def publish_detection(report_id: str, timestamp: str, defect: bool) -> bool:
+def publish_detection(report_id: str, detection_id: str, timestamp: str, defect: bool) -> bool:
     """
     Push a detection event to Firebase Realtime Database.
 
     Structure:
         {report_id}
-           └── {detection_id}   (auto-generated Firebase push key)
-                ├── defect: true | false
-                └── timestamp: "2026-03-09T14:21:00Z"
+           ├── defect
+           │    └── {detection_id}
+           │         └── timestamp: "2026-03-09T14:21:00Z"
+           └── non_defect
+                └── {detection_id}
+                     └── timestamp: "2026-03-09T14:21:00Z"
 
     Args:
         report_id: Report identifier (from /api/reports/open).
+        detection_id: Unique identifier for this detection.
         timestamp: ISO 8601 UTC timestamp string.
         defect: True if defect detected, False otherwise.
 
@@ -85,16 +89,46 @@ def publish_detection(report_id: str, timestamp: str, defect: bool) -> bool:
         logger.error("[Error] Firebase not initialized")
         return False
 
+    group = "defect" if defect else "non_defect"
     payload = {
-        "defect": defect,
         "timestamp": timestamp,
     }
 
     try:
-        ref = db.reference(report_id)
-        ref.push(payload)
-        logger.debug("Detection sent → report_id=%s defect=%s", report_id, defect)
+        # report_id / defect|non_defect / detection_id
+        ref = db.reference(f"{report_id}/{group}/{detection_id}")
+        ref.set(payload)
+        logger.debug("Detection sent → report_id=%s group=%s det_id=%s", report_id, group, detection_id)
         return True
     except Exception as e:
         logger.error("[Error] Firebase write failed: %s", e)
+        return False
+
+
+def publish_session_info(report_id: str, session_info: dict) -> bool:
+    """
+    Safely write session_info under the report_id node without overwriting 
+    existing nodes (like defect/non_defect).
+
+    Args:
+        report_id: Report identifier.
+        session_info: Dictionary containing telemetry, control, and config metadata.
+
+    Returns:
+        True if write succeeded, False otherwise.
+    """
+    if not _initialized:
+        logger.error("[Error] Firebase not initialized")
+        return False
+
+    logger.info("Writing session_info to Firebase for report_id: %s...", report_id)
+    try:
+        # We use set on the specific child node to avoid any root update issues
+        # and ensure it doesn't overwrite sibling nodes like defect/non_defect
+        ref = db.reference(f"{report_id}/session_info")
+        ref.set(session_info)
+        logger.info("Success: session_info written to Firebase for report_id: %s", report_id)
+        return True
+    except Exception as e:
+        logger.error("[Error] Failed to write session_info to Firebase for report_id: %s. Reason: %s", report_id, e)
         return False

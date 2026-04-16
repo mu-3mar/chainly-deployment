@@ -9,6 +9,7 @@ from typing import Any, Optional, Union, Set
 
 import numpy as np
 
+from core.firebase_client import publish_session_info
 from core.pipeline import Pipeline
 from core.pipeline_diagnostics import get_diagnostics
 from core.pipeline_manager import PipelineManager
@@ -28,9 +29,13 @@ class SessionWorker(threading.Thread):
         report_id: str,
         camera_source: Union[str, int],
         production_line_id: str,
+        target_speed: int,
+        max_temp: int,
+        max_amps: int,
         box_cfg: dict,
         defect_cfg: dict,
         stream_cfg: dict,
+        app_cfg: dict,
         loop: asyncio.AbstractEventLoop,
     ):
         super().__init__(daemon=True)
@@ -40,7 +45,29 @@ class SessionWorker(threading.Thread):
         self._box_cfg = box_cfg
         self._defect_cfg = defect_cfg
         self._stream_cfg = {**stream_cfg, "source": camera_source}
+        self._app_cfg = app_cfg
         self._loop = loop
+
+        # Initialize structured session info with default and provided values
+        defaults = self._app_cfg.get("session_defaults", {})
+        tel_def = defaults.get("telemetry", {})
+        ctrl_def = defaults.get("control", {})
+
+        self.session_info = {
+            "telemetry": {
+                "rpm_actual": tel_def.get("rpm_actual", 0),
+                "predicted_temp": tel_def.get("predicted_temp", 0),
+                "torque": tel_def.get("torque", 0),
+            },
+            "control": {
+                "target_speed": target_speed,
+                "machine_status": ctrl_def.get("machine_status", "idle"),
+            },
+            "config": {
+                "max_temp": max_temp,
+                "max_amps": max_amps,
+            },
+        }
 
         self._stop_event = threading.Event()
         self._started_at: Optional[datetime] = None
@@ -74,6 +101,10 @@ class SessionWorker(threading.Thread):
         """Start camera, register with PipelineManager, run camera feeder until stop."""
         self._started_at = datetime.utcnow()
         try:
+            # Publish session_info immediately on startup so the client sees it in Firebase
+            # before the potentially slow Pipeline/Camera initialization blocks the thread.
+            publish_session_info(self.report_id, self.session_info)
+
             self._pipeline_ref = Pipeline(
                 box_cfg=self._box_cfg,
                 defect_cfg=self._defect_cfg,
@@ -84,7 +115,10 @@ class SessionWorker(threading.Thread):
             )
             self._pipeline_ref.stream.start()
 
-            firebase_meta = {"report_id": self.report_id}
+            firebase_meta = {
+                "report_id": self.report_id,
+                "session_info": self.session_info,
+            }
             self._manager.register_session(
                 self.report_id,
                 self._pipeline_ref,

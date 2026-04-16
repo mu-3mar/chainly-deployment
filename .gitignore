@@ -1,20 +1,24 @@
-# 🔐 secrets
-config/*.json
-config/webrtc.yaml
-
-# 📦 models
-models/
-*.pt
-*.onnx
-*.engine
-
-# 🌱 env
-.env
-
-# 🐍 python
+# Python
 __pycache__/
 *.pyc
 
-# 🧪 misc
-*.log
-.DS_Store
+# Environment
+.env
+
+# Git (not typically needed, but included per requirement)
+.git/
+
+# Secrets (VERY IMPORTANT)
+config/*.json
+config/firebase.yaml
+config/webrtc.yaml
+
+# Keep example config templates tracked
+!config/*.example.json
+!config/firebase_config.json.example
+!config/firebase-service-account.example.json
+!config/*.example.yaml
+
+# Node (if any)
+node_modules/
+

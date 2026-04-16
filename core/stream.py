@@ -58,28 +58,18 @@ class CamStream:
             height: Deprecated. Kept for backwards compatibility; capture always
                     uses the camera’s native resolution.
         """
+        # ── Task 4: Force V4L2 backend + MJPG for maximum Linux camera FPS ──
         # NOTE (Resolution Policy):
         #   We deliberately DO NOT set CAP_PROP_FRAME_WIDTH / HEIGHT here.
-        #   The stream is opened at its native resolution and all downstream
+        #   The camera is opened at its native resolution and all downstream
         #   processing (detection + rendering + WebRTC) operates on the
         #   full‑resolution frames. Any inference-time resizing must be done
         #   on a copy inside the pipeline, never by downscaling the capture.
-        #
-        # Deployment note:
-        #   In production `camera_source` is a public RTSP/HTTP URL. For URLs we
-        #   must not force Linux V4L2/MJPG settings (they apply to local devices only).
-        src_str = str(source) if source is not None else ""
-        is_url = isinstance(source, str) and "://" in src_str
-        if is_url:
-            self.cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        else:
-            # ── Local device path/index legacy path (kept for backwards compatibility) ──
-            self.cap = cv2.VideoCapture(source, cv2.CAP_V4L2)
-            self.cap.set(
-                cv2.CAP_PROP_FOURCC,
-                cv2.VideoWriter_fourcc(*"MJPG"),
-            )
+        self.cap = cv2.VideoCapture(source, cv2.CAP_V4L2)
+        self.cap.set(
+            cv2.CAP_PROP_FOURCC,
+            cv2.VideoWriter_fourcc(*"MJPG"),
+        )
 
         if not self.cap.isOpened():
             logger.error("Failed to open video source: %s", source)
@@ -92,10 +82,9 @@ class CamStream:
         fourcc_int = int(self.cap.get(cv2.CAP_PROP_FOURCC))
         fourcc_str = "".join([chr((fourcc_int >> (8 * i)) & 0xFF) for i in range(4)])
 
-        backend = "default" if is_url else "V4L2"
         logger.debug(
-            "CamStream opened: backend=%s, fourcc=%s, res=%dx%d, estimated_fps=%.1f",
-            backend, fourcc_str, actual_w, actual_h, actual_fps,
+            "CamStream opened: backend=V4L2, fourcc=%s, res=%dx%d, estimated_fps=%.1f",
+            fourcc_str, actual_w, actual_h, actual_fps,
         )
 
         # ── Task 1+2: Single-slot frame queue — newest frame only ──
