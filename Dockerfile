@@ -1,34 +1,31 @@
 # syntax=docker/dockerfile:1.7
-#
-# Chainly AI — CPU-only Ultralytics YOLO + FastAPI.
-# Layer order: dependency files → PyTorch CPU → requirements → application code
-# so code-only rebuilds do not reinstall Python packages.
+FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
 
-FROM python:3.10-slim
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 WORKDIR /app
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+        python3.10 \
+        python3-pip \
+        ca-certificates \
         libglib2.0-0 \
         libgl1 \
+    && ln -sf /usr/bin/python3.10 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
-# 1) Dependency manifest only (maximizes cache hits when code changes)
-COPY requirements.txt /app/requirements.txt
+COPY requirements.txt /tmp/requirements.txt
+RUN python -m pip install --upgrade pip \
+    && python -m pip install --extra-index-url https://download.pytorch.org/whl/cu128 -r /tmp/requirements.txt \
+    && rm -f /tmp/requirements.txt
 
-# 2) CPU-only PyTorch, then 3) the rest of the stack
-RUN python -m pip install --upgrade pip --no-cache-dir \
-    && python -m pip install --no-cache-dir \
-        torch==2.2.0+cpu torchvision==0.17.0+cpu \
-        --index-url https://download.pytorch.org/whl/cpu \
-    && python -m pip install --no-cache-dir -r /app/requirements.txt
-
-# 4) Application source (change often — stays above cached dependency layers)
 COPY . /app
 
 RUN useradd --create-home --home-dir /home/appuser --shell /usr/sbin/nologin appuser \
@@ -36,5 +33,4 @@ RUN useradd --create-home --home-dir /home/appuser --shell /usr/sbin/nologin app
 USER appuser
 
 EXPOSE 8000
-
 CMD ["python", "main.py"]

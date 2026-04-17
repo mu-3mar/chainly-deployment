@@ -1,15 +1,12 @@
-# Runtime dependencies (CPU PyTorch is installed separately in Dockerfile).
-# Pin only where needed for binary compatibility.
-
-fastapi
-uvicorn
-pydantic
-PyYAML
-
-numpy==1.26.4
-opencv-python-headless==4.8.1.78
-ultralytics
-
-aiortc
-av
-firebase_admin
+torch==2.9.1
+torchvision==0.24.1
+ultralytics==8.4.7
+opencv-python-headless==4.13.0.90
+numpy==2.2.6
+fastapi==0.128.2
+uvicorn==0.40.0
+pydantic==2.12.5
+PyYAML==6.0.3
+aiortc==1.14.0
+av==16.1.0
+firebase_admin==7.2.0
