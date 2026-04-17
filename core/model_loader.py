@@ -1,11 +1,31 @@
-"""Singleton loader for YOLO detection models (Ultralytics, CPU)."""
+"""Singleton loader for YOLO detection models."""
 
 import logging
 from typing import Optional
 
-from ultralytics import YOLO
-
 logger = logging.getLogger(__name__)
+
+
+def _silence_tensorrt() -> None:
+    """Monkey-patch trt.Logger default to ERROR so TensorRT C++ runtime is quiet."""
+    try:
+        import tensorrt as trt
+
+        _OrigLogger = trt.Logger
+        _ERROR = trt.Logger.ERROR
+
+        class _QuietLogger(_OrigLogger):
+            def __init__(self, severity=None):
+                super().__init__(_ERROR)
+
+        trt.Logger = _QuietLogger
+    except ImportError:
+        pass
+
+
+_silence_tensorrt()
+
+from ultralytics import YOLO
 
 
 class ModelLoader:
@@ -26,30 +46,28 @@ class ModelLoader:
         return cls._instance
 
     def load_models(self, box_model_path: str, defect_model_path: str) -> None:
+        """
+        Load both detection models.
+
+        Args:
+            box_model_path: Path to box detection model
+            defect_model_path: Path to defect detection model
+        """
         if self._loaded:
             logger.debug("Models already loaded")
             return
 
         self.box_model = YOLO(box_model_path, task="detect")
         self.defect_model = YOLO(defect_model_path, task="detect")
-
-        # Apply .to() ONLY for PyTorch models
-        if box_model_path.endswith(".pt"):
-            self.box_model.to("cuda")
-
-        if defect_model_path.endswith(".pt"):
-            self.defect_model.to("cuda")
-
         self._loaded = True
         logger.info("[Service] models loaded")
 
-    def warmup(self, device: str = "cpu") -> None:
-        """Run dummy inference to warm caches and reduce first-frame latency."""
+    def warmup(self, device: str = "0") -> None:
+        """Run dummy inference to warm up GPU/cache. Reduces first-frame latency."""
         if not self._loaded:
             return
         try:
             import numpy as np
-
             dummy = np.zeros((480, 640, 3), dtype=np.uint8)
             self.box_model(dummy, verbose=False, device=device)
             self.defect_model(dummy, verbose=False, device=device)
