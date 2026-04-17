@@ -26,23 +26,22 @@ class ModelLoader:
         return cls._instance
 
     def load_models(self, box_model_path: str, defect_model_path: str) -> None:
-        """
-        Load both detection models.
-
-        Args:
-            box_model_path: Path to box detection model
-            defect_model_path: Path to defect detection model
-        """
         if self._loaded:
             logger.debug("Models already loaded")
             return
 
         self.box_model = YOLO(box_model_path, task="detect")
         self.defect_model = YOLO(defect_model_path, task="detect")
-        self.box_model.to("cpu")
-        self.defect_model.to("cpu")
+
+        # Apply .to() ONLY for PyTorch models
+        if box_model_path.endswith(".pt"):
+            self.box_model.to("cuda")
+
+        if defect_model_path.endswith(".pt"):
+            self.defect_model.to("cuda")
+
         self._loaded = True
-        logger.info("[Service] models loaded (CPU)")
+        logger.info("[Service] models loaded")
 
     def warmup(self, device: str = "cpu") -> None:
         """Run dummy inference to warm caches and reduce first-frame latency."""
