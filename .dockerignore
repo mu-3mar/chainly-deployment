@@ -1,0 +1,9 @@
+# ignore heavy/runtime stuff
+config/
+models/
+
+# optional 
+__pycache__/
+*.pyc
+.git
+.env
